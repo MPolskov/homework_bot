@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import logging
 import time
@@ -38,7 +39,7 @@ logging.basicConfig(
     level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-handler = RotatingFileHandler('my_logger.log', maxBytes=50000000, backupCount=5)
+handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(handler)
 
 
@@ -63,7 +64,8 @@ def send_message(bot, message):
     """Отправка сообщения в Telegram."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logger.debug('Сообщение успешно отправлено.')
+    except telegram.error.TelegramError as error:
+        logging.error(f'Ошибка при отправке сообщения: {error}')
     except Exception as error:
         logging.error(f'Ошибка при отправке сообщения: {error}')
 
@@ -76,18 +78,15 @@ def get_api_answer(timestamp):
             headers=HEADERS,
             params=timestamp
         )
-        if homework_statuses.status_code != HTTPStatus.OK:
-            raise requests.exceptions.HTTPError
-    except requests.exceptions.HTTPError:
-        logger.error('Ошибка доступа к API Я.Практикума'
-                     f'HTTPStatus = {homework_statuses.status_code}')
-    except Exception as error:
-        logging.error(f'Ошибка при запросе к API: {error}')
+    except requests.RequestException as error:
+        logger.error(f'Сбой в работе программы: {error}')
+    if homework_statuses.status_code != HTTPStatus.OK:
+        raise requests.exceptions.HTTPError
     try:
         hw_dict = homework_statuses.json()
+        return hw_dict
     except JSONDecodeError:
         logger.error('Ответ не может быть преобразован в словарь')
-    return hw_dict
 
 
 def check_response(response: dict):
@@ -117,7 +116,7 @@ def check_response(response: dict):
 
 def parse_status(homework):
     """Выгрузка статуса проверки задания."""
-    last_hw = homework['homeworks'][0]
+    last_hw, *_ = homework.get('homeworks')
     homework_name = last_hw['homework_name']
     homework_status = last_hw['status']
     if homework_status in HOMEWORK_VERDICTS:
@@ -138,13 +137,18 @@ def main():
     while True:
         try:
             response = get_api_answer(timestamp)
-            if check_response(response):
-                timestamp = response['current_date']
+            check_response(response)
+            timestamp = int(response['current_date'])
+            if response['homeworks']:
                 status_hw = parse_status(response)
                 if status_hw and status_hw != last_status:
                     send_message(bot, status_hw)
+                    logger.debug('Сообщение успешно отправлено.')
                 else:
                     logger.debug('Статус работы не изменился')
+        except requests.exceptions.HTTPError:
+            logger.error('Ошибка доступа к API Я.Практикума'
+                        f'HTTPStatus = {homework_statuses.status_code}')
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             send_message(bot, message)
