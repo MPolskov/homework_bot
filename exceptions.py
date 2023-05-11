@@ -5,3 +5,15 @@ class LostEnvVarError(Exception):
     """
 
     pass
+
+class UnknownStatusError(Exception):
+    """Исключение статуса проверки ДЗ.
+    """
+
+    pass
+
+class KeyError(Exception):
+    """Исключение статуса проверки ДЗ.
+    """
+
+    pass

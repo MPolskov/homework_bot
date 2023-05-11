@@ -6,12 +6,11 @@ import time
 import telegram
 
 from dotenv import load_dotenv
-from logging.handlers import RotatingFileHandler
 from json import JSONDecodeError
 from http import HTTPStatus
 
 
-from exceptions import LostEnvVarError
+from exceptions import LostEnvVarError, UnknownStatusError, KeyError
 
 load_dotenv()
 
@@ -38,7 +37,7 @@ logging.basicConfig(
     filename="main.log",
     level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(handler)
 
@@ -62,12 +61,8 @@ def check_tokens():
 
 def send_message(bot, message):
     """Отправка сообщения в Telegram."""
-    try:
-        bot.send_message(TELEGRAM_CHAT_ID, message)
-    except telegram.error.TelegramError as error:
-        logging.error(f'Ошибка при отправке сообщения: {error}')
-    except Exception as error:
-        logging.error(f'Ошибка при отправке сообщения: {error}')
+    bot.send_message(TELEGRAM_CHAT_ID, message)
+    logger.debug(f'Сообщение успешно отправлено: {message}.')
 
 
 def get_api_answer(timestamp):
@@ -89,41 +84,37 @@ def get_api_answer(timestamp):
         logger.error('Ответ не может быть преобразован в словарь')
 
 
-def check_response(response: dict):
+def check_response(response):
     """Проверка ответа от API Практикума."""
-    if type(response) == dict:
+    if isinstance(response, dict) :
         logger.debug('Ответ является словарем')
     else:
         logger.error('Неверный тип данных ответа')
         raise TypeError()
-    if 'homeworks' in response.keys:
-        logger.debug('В ответе есть ключ "homeworks"')
-    else:
+    if 'homeworks' not in response:
         logger.error('Отсутствует ключ "homeworks"!')
-        return False
-    if type(response['homeworks']) == list:
+        raise KeyError()
+    homeworks = response.get('homeworks')
+    if isinstance(homeworks, list):
         logger.debug('ключ "homeworks" содержит список')
     else:
         logger.error('Ключ "homeworks" имеет неверный тип данных!')
-        return False
-    if 'current_date' in response.keys:
-        logger.debug('В ответе есть ключ "current_date"')
-    else:
-        logger.error('Отсутствует ключ "current_date"!')
-        return False
-    return True
+        raise TypeError()
+    return homeworks
 
 
 def parse_status(homework):
     """Выгрузка статуса проверки задания."""
-    last_hw, *_ = homework.get('homeworks')
-    homework_name = last_hw['homework_name']
-    homework_status = last_hw['status']
-    if homework_status in HOMEWORK_VERDICTS:
-        verdict = HOMEWORK_VERDICTS[homework_status]
-        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
-    else:
-        logger.error(f'Неизвестный статус домашнего задания {homework_status}')
+    if isinstance(homework, list):
+        homework, *_ = homework
+    if 'homework_name' not in homework:
+        raise KeyError('Отсутствует ключ "homework_name"!')
+    homework_name = homework.get('homework_name')
+    homework_status = homework.get('status')
+    if homework_status not in HOMEWORK_VERDICTS:
+        raise UnknownStatusError()
+    verdict = HOMEWORK_VERDICTS[homework_status]
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
@@ -131,24 +122,33 @@ def main():
     check_tokens()
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    timestamp = int(time.time())
+    timestamp = 0  # int(time.time())
     last_status = ''
+    payload = {'from_date': timestamp}
 
     while True:
         try:
-            response = get_api_answer(timestamp)
-            check_response(response)
-            timestamp = int(response['current_date'])
-            if response['homeworks']:
-                status_hw = parse_status(response)
+            response = get_api_answer(payload)
+            homework = check_response(response)
+            if homework:
+                status_hw = parse_status(homework)
                 if status_hw and status_hw != last_status:
                     send_message(bot, status_hw)
-                    logger.debug('Сообщение успешно отправлено.')
+                    payload['from_date'] = int(response['current_date'])
+                    last_status = status_hw
                 else:
                     logger.debug('Статус работы не изменился')
         except requests.exceptions.HTTPError:
             logger.error('Ошибка доступа к API Я.Практикума'
-                        f'HTTPStatus = {homework_statuses.status_code}')
+                         f'HTTPStatus = {response.status_code}')
+        except telegram.error.TelegramError as error:
+            logging.error(f'Ошибка при отправке сообщения: {error}')
+        except UnknownStatusError as error:
+            logger.error(f'Неизвестный статус домашнего задания: {error}')
+        except TypeError as error:
+            logger.error(f'Неверный тип данных ответа: {error}')
+        except KeyError as error:
+            logger.error(error)
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             send_message(bot, message)
