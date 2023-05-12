@@ -1,16 +1,17 @@
 import os
 import sys
-import requests
 import logging
 import time
+
+import requests
 import telegram
 
 from dotenv import load_dotenv
 from json import JSONDecodeError
 from http import HTTPStatus
 
-
-from exceptions import LostEnvVarError, UnknownStatusError, KeyError
+import exceptions as ex  # Импорт польз. исключений.
+import event_descriptions as ed  # Импорт описания событий
 
 load_dotenv()
 
@@ -35,9 +36,9 @@ HOMEWORK_VERDICTS = {
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     filename="main.log",
-    level=logging.INFO)
+    level=logging.DEBUG
+)
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(handler)
 
@@ -50,19 +51,21 @@ def check_tokens():
         'TELEGRAM_TOKEN': TELEGRAM_TOKEN}
     for token, value in tokens.items():
         if not value:
-            logging.error(f'Значение переменной {token} не найдено!')
+            logging.error(ed.TOKEN_MISSING_LOG.format(token))
     if not all(tokens.values()):
-        logger.critical('Отсутствуют необходимые переменные окаружения!'
-                        'Продолжение выполнения программы невозможно!')
-        raise LostEnvVarError()
+        logger.critical(ed.TOKEN_CRIT_ERROR)
+        raise ex.LostEnvVarError(ed.TOKEN_CRIT_ERROR)
     else:
-        logger.info('Проверка переменных окружения прошла успешно.')
+        logger.info(ed.TOKEN_CHECK_SUCCESSFUL)
 
 
 def send_message(bot, message):
     """Отправка сообщения в Telegram."""
-    bot.send_message(TELEGRAM_CHAT_ID, message)
-    logger.debug(f'Сообщение успешно отправлено: {message}.')
+    try:
+        bot.send_message(TELEGRAM_CHAT_ID, message)
+        logger.debug(ed.SEND_MESSAGE_SECCESSFUL.format(message))
+    except telegram.error.TelegramError as error:
+        logging.error(error)
 
 
 def get_api_answer(timestamp):
@@ -74,45 +77,48 @@ def get_api_answer(timestamp):
             params=timestamp
         )
     except requests.RequestException as error:
-        logger.error(f'Сбой в работе программы: {error}')
+        logger.error(ed.UNIVERSAL_ERROR.format(error))
     if homework_statuses.status_code != HTTPStatus.OK:
         raise requests.exceptions.HTTPError
     try:
         hw_dict = homework_statuses.json()
         return hw_dict
     except JSONDecodeError:
-        logger.error('Ответ не может быть преобразован в словарь')
+        logger.error(ed.JSON_DECODE_ERROR)
 
 
 def check_response(response):
     """Проверка ответа от API Практикума."""
-    if isinstance(response, dict) :
-        logger.debug('Ответ является словарем')
+    if isinstance(response, dict):
+        logger.debug(ed.CHECK_DICT_DEBUG)
     else:
-        logger.error('Неверный тип данных ответа')
-        raise TypeError()
+        logger.error(ed.CHECK_DICT_ERROR)
+        raise TypeError(ed.CHECK_DICT_ERROR)
     if 'homeworks' not in response:
-        logger.error('Отсутствует ключ "homeworks"!')
-        raise KeyError()
+        logger.error(ed.HOMEWORKS_MISSING_ERROR)
+        raise ex.MissingKeyError(ed.HOMEWORKS_MISSING_ERROR)
     homeworks = response.get('homeworks')
     if isinstance(homeworks, list):
-        logger.debug('ключ "homeworks" содержит список')
+        logger.debug(ed.CHECK_LIST_DEBUG)
     else:
-        logger.error('Ключ "homeworks" имеет неверный тип данных!')
-        raise TypeError()
+        logger.error(ed.CHECK_LIST_ERROR)
+        raise TypeError(ed.CHECK_LIST_ERROR)
     return homeworks
 
 
 def parse_status(homework):
     """Выгрузка статуса проверки задания."""
+    # По идее эта функция срабатывает после check_response,
+    # где данная проверка уже есть, но у pytest видимо своя логика.
     if isinstance(homework, list):
         homework, *_ = homework
     if 'homework_name' not in homework:
-        raise KeyError('Отсутствует ключ "homework_name"!')
+        raise ex.MissingKeyError(ed.MISSING_KEY_ERROR)
     homework_name = homework.get('homework_name')
     homework_status = homework.get('status')
     if homework_status not in HOMEWORK_VERDICTS:
-        raise UnknownStatusError()
+        raise ex.UnknownStatusError(ed.UNKNOWN_STATUS_ERROR
+                                    .format(homework_status))
     verdict = HOMEWORK_VERDICTS[homework_status]
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
@@ -122,8 +128,9 @@ def main():
     check_tokens()
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    timestamp = 0  # int(time.time())
+    timestamp = int(time.time())
     last_status = ''
+    last_error = ''
     payload = {'from_date': timestamp}
 
     while True:
@@ -132,25 +139,29 @@ def main():
             homework = check_response(response)
             if homework:
                 status_hw = parse_status(homework)
-                if status_hw and status_hw != last_status:
+                if status_hw != last_status:
                     send_message(bot, status_hw)
                     payload['from_date'] = int(response['current_date'])
                     last_status = status_hw
-                else:
-                    logger.debug('Статус работы не изменился')
-        except requests.exceptions.HTTPError:
-            logger.error('Ошибка доступа к API Я.Практикума'
-                         f'HTTPStatus = {response.status_code}')
-        except telegram.error.TelegramError as error:
-            logging.error(f'Ошибка при отправке сообщения: {error}')
-        except UnknownStatusError as error:
-            logger.error(f'Неизвестный статус домашнего задания: {error}')
-        except TypeError as error:
-            logger.error(f'Неверный тип данных ответа: {error}')
-        except KeyError as error:
-            logger.error(error)
+            else:
+                logger.debug(ed.STATUS_NOT_CHANGED_LOG)
+        except requests.exceptions.HTTPError as error:
+            logger.error(ed.HTTP_STATUS_ERROR.format(response.status_code))
+            if error != last_error:
+                last_error = error
+                send_message(bot, error)
+        except (
+            TypeError,
+            ex.MissingKeyError,
+            ex.UnknownStatusError,
+        ) as error:
+            logging.error(error)
+            if error != last_error:
+                last_error = error
+                send_message(bot, error)
         except Exception as error:
-            message = f'Сбой в работе программы: {error}'
+            message = ed.UNIVERSAL_ERROR.format(error)
+            logging.error(message)
             send_message(bot, message)
         finally:
             time.sleep(RETRY_PERIOD)

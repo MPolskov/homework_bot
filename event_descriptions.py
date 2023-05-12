@@ -1,0 +1,17 @@
+TOKEN_MISSING_LOG = 'Значение переменной {} не найдено!'
+TOKEN_CRIT_ERROR = ('Отсутствуют необходимые переменные окаружения!'
+                    'Продолжение выполнения программы невозможно!')
+TOKEN_CHECK_SUCCESSFUL = 'Проверка переменных окружения прошла успешно.'
+SEND_MESSAGE_SECCESSFUL = 'Сообщение успешно отправлено: {}.'
+UNIVERSAL_ERROR = 'Сбой в работе программы: {}'
+JSON_DECODE_ERROR = 'Ответ не может быть преобразован в словарь'
+CHECK_DICT_DEBUG = 'Ответ является словарем'
+CHECK_DICT_ERROR = 'Неверный тип данных ответа'
+HOMEWORKS_MISSING_ERROR = 'Отсутствует ключ "homeworks"!'
+CHECK_LIST_DEBUG = 'Ключ "homeworks" содержит список'
+CHECK_LIST_ERROR = 'Ключ "homeworks" имеет неверный тип данных!'
+MISSING_KEY_ERROR = 'Отсутствует ключ "homework_name"!'
+UNKNOWN_STATUS_ERROR = 'Неизвестный статус проверки: {}'
+STATUS_NOT_CHANGED_LOG = 'Статус работы не изменился'
+HTTP_STATUS_ERROR = ('Ошибка доступа к API Я.Практикума'
+                     'HTTPStatus = {}')
