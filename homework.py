@@ -2,13 +2,12 @@ import os
 import sys
 import logging
 import time
+from json import JSONDecodeError
+from http import HTTPStatus
 
 import requests
 import telegram
-
 from dotenv import load_dotenv
-from json import JSONDecodeError
-from http import HTTPStatus
 
 import exceptions as ex  # Импорт польз. исключений.
 import event_descriptions as ed  # Импорт описания событий
@@ -35,7 +34,8 @@ HOMEWORK_VERDICTS = {
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
-    filename="main.log",
+    filename='main.log',
+    encoding='UTF-8',
     level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
@@ -52,8 +52,13 @@ def check_tokens():
     for token, value in tokens.items():
         if not value:
             logging.error(ed.TOKEN_MISSING_LOG.format(token))
-    if not all(tokens.values()):
-        logger.critical(ed.TOKEN_CRIT_ERROR)
+    # if not all(value is not None for value in tokens.values())
+    # Данный вариант не работает, если в .env отсутствует значение токена.
+    # на сколько я понял, пустая строка при выполнении этого выражения
+    # не воспринимается как None. Почему? - пока не разобрался...
+    # Вариант if None in tokens.values() тоже не работает как ожидалось...
+    empty = (None, '',)
+    if not all(value not in empty for value in tokens.values()):
         raise ex.LostEnvVarError(ed.TOKEN_CRIT_ERROR)
     else:
         logger.info(ed.TOKEN_CHECK_SUCCESSFUL)
@@ -62,6 +67,7 @@ def check_tokens():
 def send_message(bot, message):
     """Отправка сообщения в Telegram."""
     try:
+        logger.debug(ed.SEND_MESSAGE_LOG)
         bot.send_message(TELEGRAM_CHAT_ID, message)
         logger.debug(ed.SEND_MESSAGE_SECCESSFUL.format(message))
     except telegram.error.TelegramError as error:
@@ -79,7 +85,9 @@ def get_api_answer(timestamp):
     except requests.RequestException as error:
         logger.error(ed.UNIVERSAL_ERROR.format(error))
     if homework_statuses.status_code != HTTPStatus.OK:
-        raise requests.exceptions.HTTPError
+        raise ex.HTTPStatusError(
+            ed.HTTP_STATUS_ERROR.format(homework_statuses.status_code)
+        )
     try:
         hw_dict = homework_statuses.json()
         return hw_dict
@@ -92,8 +100,7 @@ def check_response(response):
     if isinstance(response, dict):
         logger.debug(ed.CHECK_DICT_DEBUG)
     else:
-        logger.error(ed.CHECK_DICT_ERROR)
-        raise TypeError(ed.CHECK_DICT_ERROR)
+        raise ex.ResponseFormatError(ed.CHECK_DICT_ERROR)
     if 'homeworks' not in response:
         logger.error(ed.HOMEWORKS_MISSING_ERROR)
         raise ex.MissingKeyError(ed.HOMEWORKS_MISSING_ERROR)
@@ -101,8 +108,7 @@ def check_response(response):
     if isinstance(homeworks, list):
         logger.debug(ed.CHECK_LIST_DEBUG)
     else:
-        logger.error(ed.CHECK_LIST_ERROR)
-        raise TypeError(ed.CHECK_LIST_ERROR)
+        raise ex.ResponseFormatError(ed.CHECK_LIST_ERROR)
     return homeworks
 
 
@@ -125,7 +131,11 @@ def parse_status(homework):
 
 def main():
     """Основная логика работы бота."""
-    check_tokens()
+    try:
+        check_tokens()
+    except ex.LostEnvVarError as error:
+        logger.critical(error)
+        sys.exit(1)
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
@@ -145,15 +155,11 @@ def main():
                     last_status = status_hw
             else:
                 logger.debug(ed.STATUS_NOT_CHANGED_LOG)
-        except requests.exceptions.HTTPError as error:
-            logger.error(ed.HTTP_STATUS_ERROR.format(response.status_code))
-            if error != last_error:
-                last_error = error
-                send_message(bot, error)
         except (
-            TypeError,
+            ex.ResponseFormatError,
             ex.MissingKeyError,
             ex.UnknownStatusError,
+            ex.HTTPStatusError
         ) as error:
             logging.error(error)
             if error != last_error:

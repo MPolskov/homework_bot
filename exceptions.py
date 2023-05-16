@@ -23,3 +23,15 @@ class MissingKeyError(Exception):
     """
 
     pass
+
+
+class HTTPStatusError(Exception):
+    """Исключение: Статус ответа отличается от 200 (ОК)."""
+
+    pass
+
+
+class ResponseFormatError(TypeError):
+    """Исключение: Формат ответа не соответствует ожидаемому."""
+
+    pass
