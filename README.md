@@ -9,7 +9,6 @@
 
 ### Технологии
 * Python 3.9
-* Django 2.2
 * python-telegram-bot 13.7
 
 ## Установка и запуск проекта:
@@ -37,13 +36,9 @@ sourse venv/bin/activate
 ```
 python -m pip install -r requirements.txt
 ```
-Выполнить миграции:
+Запуск бота:
 ```
-python manage.py migrate
-```
-Запустить сервер:
-```
-python manage.py runserver 0.0.0.0:8000
+python homework.py
 ```
 ### Автор
 Полшков Михаил
